@@ -1,0 +1,103 @@
+name: Autograding Tests
+on:
+  push:
+    branches:
+      - assignment
+      - solution
+      
+permissions:
+  contents: read
+jobs:
+  run-autograding-tests:
+    runs-on: ubuntu-latest
+    env:
+      SUMMARY_FILE: summary.md
+      LOG_DIR: .github/workflow-logs
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+
+    - name: Parse Python version from requirements.txt
+      id: requirements-meta
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        py_version=$(awk -F '==' '/^[[:space:]]*python[[:space:]]*==/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' requirements.txt)
+        if [ -z "$py_version" ]; then
+          echo "Could not find 'python == <version>' in requirements.txt" >&2
+          exit 1
+        fi
+
+        echo "python_version=$py_version" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ steps.requirements-meta.outputs.python_version }}
+
+    - name: Install dependencies from requirements.txt
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        filtered_requirements=$(grep -Eiv '^[[:space:]]*(python[[:space:]]*(==|=)|#|$)' requirements.txt || true)
+        if [ -n "$filtered_requirements" ]; then
+          printf '%s\n' "$filtered_requirements" | python -m pip install -r /dev/stdin
+        fi
+
+    - name: Initialize summary
+      shell: bash
+      run: |
+        source .github/scripts/check_utils.sh
+        init_summary
+
+    - name: Check exercise 12
+      id: check-exercise-12
+      shell: bash
+      run: |
+        set +e
+        set +o pipefail
+        source .github/scripts/check_utils.sh
+
+        run_check "Check exercise 12" pytest -q tests/test_placeholder.py
+        exit $?
+
+    - name: Check exercise 10
+      id: check-exercise-10
+      if: always()
+      shell: bash
+      run: |
+        set +e
+        set +o pipefail
+        source .github/scripts/check_utils.sh
+
+        run_check "Check exercise 10" pytest -q tests/test_multi_file_commit.py
+        exit $?
+
+    - name: Finalize overall result
+      if: always()
+      shell: bash
+      run: |
+        set +e
+        set +o pipefail
+        source .github/scripts/check_utils.sh
+
+        finalize_checks || true
+        exit 0
+
+    - name: Summarize
+      if: always()
+      shell: bash
+      run: |
+        if [ -f summary.md ]; then
+          cat summary.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          {
+            echo "An unknown error has occurred, cannot display summary."
+            echo
+            echo "- You can inspect the workflow logs to troubleshoot the issue."
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
